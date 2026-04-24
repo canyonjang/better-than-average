@@ -61,15 +61,15 @@ if not st.session_state.logged_in:
             if available_classes:
                 active_class = available_classes[0]
                 
-                # 그룹 배정 로직 (A: 50%, B: 50%)
-                current_logs = supabase.table("student_logs").select("id").eq("class_name", active_class).execute().data
+                # 전용 로그 테이블(future_student_logs) 사용
+                current_logs = supabase.table("future_student_logs").select("id").eq("class_name", active_class).execute().data
                 group = "Group_A" if len(current_logs) % 2 == 0 else "Group_B"
                 
                 st.session_state.update({
                     "logged_in": True, "user_type": "student", 
                     "student_name": name, "class_name": active_class, "group": group
                 })
-                supabase.table("student_logs").insert({"class_name": active_class, "student_name": name}).execute()
+                supabase.table("future_student_logs").insert({"class_name": active_class, "student_name": name}).execute()
                 st.rerun()
             else:
                 st.warning("현재 열려 있는 수업이 없습니다.")
@@ -90,15 +90,16 @@ elif st.session_state.user_type == "prof":
             supabase.table("future_state").update({"current_state": state_val}).eq("class_name", c).execute()
     if c3.button("결과 확인"): 
         supabase.table("future_state").update({"current_state": "result"}).eq("class_name", target_cls).execute()
-    if c4.button("새로고침"): st.rerun()
+    if c4.button("새로고침"): 
+        st.rerun()
     if c5.button("데이터 초기화"):
         supabase.table("future_results").delete().eq("class_name", target_cls).execute()
-        supabase.table("student_logs").delete().eq("class_name", target_cls).execute()
+        supabase.table("future_student_logs").delete().eq("class_name", target_cls).execute()
         st.success(f"'{target_cls}' 데이터 초기화 완료.")
         st.rerun()
 
-    # 로그인한 학생 수, 응답 제출한 학생 수 표시
-    login_count = len(supabase.table("student_logs").select("student_name", count="exact").eq("class_name", target_cls).execute().data)
+    # 로그인한 학생 수, 응답 제출한 학생 수 표시 (새로고침 없이도 사이드바에 표시되도록 설정)
+    login_count = len(supabase.table("future_student_logs").select("student_name", count="exact").eq("class_name", target_cls).execute().data)
     res_data_count = supabase.table("future_results").select("student_name").eq("class_name", target_cls).execute().data
     df_count = pd.DataFrame(res_data_count)
     complete_count = len(df_count['student_name'].unique()) if not df_count.empty else 0
@@ -113,27 +114,26 @@ elif st.session_state.user_type == "prof":
     if not df.empty:
         avg_scores = df.groupby("group_type")["score"].mean()
         
-        # 차트 제목 수정
         st.subheader("비교 대상에 따른 자기 우월평가 차이")
         fig, ax = plt.subplots(figsize=(10, 5))
         colors = ['#ff9999' if 'A' in g else '#66b3ff' for g in avg_scores.index]
         bars = ax.bar(avg_scores.index, avg_scores.values, color=colors)
         ax.set_ylabel("Average Bias Score (-10 to +10)")
         
-        # 글자 겹침 방지를 위해 Y축 여백 확대
+        # Y축 범위를 넓혀 글자 겹침 방지
         ax.set_ylim(-12, 2)
         ax.axhline(0, color='black', linewidth=0.8)
         
-        # 텍스트 위치 및 정렬 최적화
+        # 텍스트가 막대와 겹치지 않게 위치 조정
         for bar in bars:
             yval = bar.get_height()
-            offset = -0.5 if yval < 0 else 0.5
-            va = 'top' if yval < 0 else 'bottom'
-            ax.text(bar.get_x() + bar.get_width()/2, yval + offset, f"{yval:.2f}", ha='center', va=va, fontweight='bold')
+            # 음수일 때 막대 아래쪽, 양수일 때 막대 위쪽에 표시
+            va_pos = 'top' if yval < 0 else 'bottom'
+            text_offset = -0.3 if yval < 0 else 0.3
+            ax.text(bar.get_x() + bar.get_width()/2, yval + text_offset, f"{yval:.2f}", ha='center', va=va_pos, fontweight='bold')
             
         st.pyplot(fig)
         
-        # 이론적 배경 문구 수정
         st.info("💡 **이론적 배경:** Alicke et al.(1995)에 따르면, 비교 대상이 '평균적 대학생(Group A)'과 같이 추상적일 때보다 '얼굴 사진(Group B)'과 같이 개별화(Individuated)될 때 자기 우월평가 편향이 유의미하게 감소합니다. 즉 Group A의 평균 점수가 Group B의 평균 점수보다 작습니다.")
 
 # 6. 학생 화면
@@ -149,7 +149,6 @@ else:
         if st.session_state.step < 8:
             st.subheader(f"문항 {st.session_state.step + 1} / 8")
             
-            # 동적 조사(이/가) 및 비교 문구 처리
             josa = get_josa(QUESTIONS[st.session_state.step])
             
             if st.session_state.group == "Group_A":
