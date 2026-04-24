@@ -1,0 +1,7 @@
+streamlit
+supabase
+pandas
+numpy
+matplotlib
+wordcloud
+scipy
