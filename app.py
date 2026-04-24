@@ -29,6 +29,16 @@ QUESTIONS = [
     "암에 걸림"
 ]
 
+# 조사(이/가) 판별 함수
+def get_josa(text):
+    last_char = text[-1]
+    if '가' <= last_char <= '힣':
+        if (ord(last_char) - ord('가')) % 28 > 0:
+            return "이"
+        else:
+            return "가"
+    return "이"
+
 # 3. 세션 초기화
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "user_type": None, "class_name": None, "step": 0, "responses": {}})
@@ -87,6 +97,15 @@ elif st.session_state.user_type == "prof":
         st.success(f"'{target_cls}' 데이터 초기화 완료.")
         st.rerun()
 
+    # 로그인한 학생 수, 응답 제출한 학생 수 표시
+    login_count = len(supabase.table("student_logs").select("student_name", count="exact").eq("class_name", target_cls).execute().data)
+    res_data_count = supabase.table("future_results").select("student_name").eq("class_name", target_cls).execute().data
+    df_count = pd.DataFrame(res_data_count)
+    complete_count = len(df_count['student_name'].unique()) if not df_count.empty else 0
+    
+    st.sidebar.metric("로그인한 학생 수", f"{login_count}명")
+    st.sidebar.metric("응답 완료 학생 수", f"{complete_count}명")
+
     st.header(f"📊 {target_cls} 실험 결과 분석")
     data = supabase.table("future_results").select("*").eq("class_name", target_cls).execute()
     df = pd.DataFrame(data.data)
@@ -94,21 +113,28 @@ elif st.session_state.user_type == "prof":
     if not df.empty:
         avg_scores = df.groupby("group_type")["score"].mean()
         
-        st.subheader("비교 대상에 따른 낙관적 편향(자기 우월평가) 차이")
+        # 차트 제목 수정
+        st.subheader("비교 대상에 따른 자기 우월평가 차이")
         fig, ax = plt.subplots(figsize=(10, 5))
         colors = ['#ff9999' if 'A' in g else '#66b3ff' for g in avg_scores.index]
         bars = ax.bar(avg_scores.index, avg_scores.values, color=colors)
         ax.set_ylabel("Average Bias Score (-10 to +10)")
-        ax.set_ylim(-6, 1)
+        
+        # 글자 겹침 방지를 위해 Y축 여백 확대
+        ax.set_ylim(-12, 2)
         ax.axhline(0, color='black', linewidth=0.8)
         
+        # 텍스트 위치 및 정렬 최적화
         for bar in bars:
             yval = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, yval - 0.5, f"{yval:.2f}", ha='center', fontweight='bold')
+            offset = -0.5 if yval < 0 else 0.5
+            va = 'top' if yval < 0 else 'bottom'
+            ax.text(bar.get_x() + bar.get_width()/2, yval + offset, f"{yval:.2f}", ha='center', va=va, fontweight='bold')
             
         st.pyplot(fig)
         
-        st.info("💡 **이론적 배경:** 알리케(Alicke et al., 1995)의 연구에 따르면, 비교 대상이 '평균적 대학생(Group A)'과 같이 추상적일 때보다 '정면 사진(Group B)'과 같이 개별화(Individuated)될 때 자기 우월평가 편향이 유의미하게 감소합니다.")
+        # 이론적 배경 문구 수정
+        st.info("💡 **이론적 배경:** Alicke et al.(1995)에 따르면, 비교 대상이 '평균적 대학생(Group A)'과 같이 추상적일 때보다 '얼굴 사진(Group B)'과 같이 개별화(Individuated)될 때 자기 우월평가 편향이 유의미하게 감소합니다. 즉 Group A의 평균 점수가 Group B의 평균 점수보다 작습니다.")
 
 # 6. 학생 화면
 else:
@@ -123,16 +149,21 @@ else:
         if st.session_state.step < 8:
             st.subheader(f"문항 {st.session_state.step + 1} / 8")
             
+            # 동적 조사(이/가) 및 비교 문구 처리
+            josa = get_josa(QUESTIONS[st.session_state.step])
+            
             if st.session_state.group == "Group_A":
                 st.markdown("### 비교 대상: **우리 학교의 평균적인 대학생**")
+                compare_text = "대상과 비교해"
             else:
                 st.markdown("### 비교 대상: **아래 사진 속의 학생**")
+                compare_text = "이 학생과 비교해"
                 if os.path.exists("front.jpg"):
                     st.image("front.jpg", width=350)
                 else:
                     st.warning("정면 사진 파일(front.jpg)을 찾을 수 없습니다.")
 
-            st.write(f"**질문: 귀하에게 '{QUESTIONS[st.session_state.step]}'이(가) 일어날 가능성은 대상과 비교해 어느 정도입니까?**")
+            st.write(f"**질문: 귀하에게 '{QUESTIONS[st.session_state.step]}'{josa} 일어날 가능성은 {compare_text} 어느 정도입니까?**")
             score = st.select_slider("확률 선택", options=list(range(-10, 11)), value=0, key=f"q_{st.session_state.step}")
             st.caption("-10: 나에게 일어날 확률이 훨씬 낮음 | 0: 비슷함 | +10: 나에게 일어날 확률이 훨씬 높음")
             
